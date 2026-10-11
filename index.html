@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESP32 Home Dashboard</title>
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(circle at 10% 0%, rgba(30,58,138,0.6) 0%, transparent 35%),
+      radial-gradient(circle at 90% 100%, rgba(109,40,217,0.35) 0%, transparent 30%),
+      #050915;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 16px;
+    font-size: 16px;
+  }
+  .container { max-width: 720px; margin: 0 auto; }
+
+  h1 { font-size: 22px; margin-bottom: 4px; letter-spacing: 0.5px; }
+  h2 {
+    font-size: 12px;
+    margin: 22px 0 12px;
+    color: #7dd3fc;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    font-weight: 600;
+  }
+
+  #loginBox {
+    background: rgba(30, 41, 59, 0.55);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(125, 211, 252, 0.2);
+    padding: 28px;
+    border-radius: 20px;
+    max-width: 380px;
+    margin: 80px auto;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  #loginBox h1 { color: #7dd3fc; margin-bottom: 20px; text-align: center; font-size: 22px; }
+  #loginBox label {
+    display: block; font-size: 12px; color: #94a3b8;
+    margin-bottom: 6px; margin-top: 14px;
+    letter-spacing: 1px; text-transform: uppercase;
+  }
+  #loginBox input {
+    width: 100%; padding: 13px 14px;
+    background: rgba(15, 23, 42, 0.7);
+    border: 1px solid #334155; border-radius: 10px;
+    color: #e2e8f0; font-size: 15px;
+    transition: border 0.2s;
+  }
+  #loginBox input:focus { outline: none; border-color: #7dd3fc; }
+  #loginBox button {
+    width: 100%; margin-top: 24px; padding: 15px;
+    background: linear-gradient(135deg, #0ea5e9, #6366f1);
+    color: white; border: none; border-radius: 12px;
+    font-size: 16px; font-weight: 700; cursor: pointer;
+    letter-spacing: 1px;
+    box-shadow: 0 8px 20px rgba(14, 165, 233, 0.35);
+    transition: transform 0.15s;
+  }
+  #loginBox button:active { transform: scale(0.97); }
+
+  #dashboard { display: none; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .live-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #22c55e; box-shadow: 0 0 12px #22c55e;
+    animation: pulse 1.6s ease-in-out infinite;
+    margin-right: 8px; display: inline-block;
+  }
+  .live-dot.off { background: #64748b; box-shadow: none; animation: none; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.5; transform: scale(1.4); }
+  }
+
+  #banner {
+    padding: 16px; border-radius: 14px; text-align: center;
+    font-weight: 700; margin-bottom: 18px; font-size: 15px;
+    letter-spacing: 0.5px; transition: all 0.3s ease;
+    border: 1px solid transparent;
+  }
+  #banner.connected {
+    background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.15));
+    color: #6ee7b7; border-color: rgba(16,185,129,0.4);
+  }
+  #banner.disconnected {
+    background: linear-gradient(135deg, rgba(239,68,68,0.2), rgba(127,29,29,0.15));
+    color: #fca5a5; border-color: rgba(239,68,68,0.4);
+  }
+  #banner.alert-intruder, #banner.alert-gas, #banner.alert-flame {
+    background: linear-gradient(135deg, #dc2626, #7f1d1d);
+    color: #fff; box-shadow: 0 0 30px rgba(220,38,38,0.7);
+    animation: flash 0.7s infinite; font-size: 17px;
+  }
+  #banner.alert-success {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff; box-shadow: 0 0 24px rgba(16,185,129,0.6);
+  }
+  @keyframes flash { 50% { opacity: 0.55; } }
+
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .card {
+    background: rgba(30, 41, 59, 0.55);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(125, 211, 252, 0.12);
+    padding: 16px 12px; border-radius: 16px;
+    text-align: center; position: relative; overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+  .card::before {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(135deg, rgba(125,211,252,0.06), transparent 60%);
+    pointer-events: none;
+  }
+  .card .label {
+    font-size: 10px; color: #94a3b8;
+    text-transform: uppercase; letter-spacing: 1.5px;
+    margin-bottom: 8px; font-weight: 600;
+  }
+  .card .value {
+    font-size: 22px; font-weight: 800; color: #7dd3fc;
+    font-variant-numeric: tabular-nums; letter-spacing: 0.5px;
+  }
+  .card .icon { font-size: 18px; display: block; margin-bottom: 6px; }
+  .card.ok .value { color: #4ade80; text-shadow: 0 0 18px rgba(74,222,128,0.5); }
+  .card.warn {
+    border-color: rgba(239,68,68,0.5);
+    box-shadow: 0 0 24px rgba(239,68,68,0.35);
+    animation: shake 0.4s infinite;
+  }
+  .card.warn .value { color: #f87171; text-shadow: 0 0 18px rgba(248,113,113,0.7); }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+  }
+
+  .btn {
+    padding: 16px; border: none; border-radius: 14px;
+    font-size: 15px; font-weight: 700; cursor: pointer;
+    color: white; letter-spacing: 0.5px;
+    transition: transform 0.12s, box-shadow 0.2s;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+  }
+  .btn:active { transform: scale(0.96); }
+  .btn-danger {
+    width: 100%; margin-top: 12px; padding: 20px;
+    font-size: 17px;
+    background: linear-gradient(135deg, #7f1d1d, #dc2626);
+    box-shadow: 0 6px 26px rgba(220,38,38,0.5);
+    animation: dangerPulse 1.8s ease-in-out infinite;
+  }
+  @keyframes dangerPulse {
+    0%, 100% { box-shadow: 0 6px 26px rgba(220,38,38,0.5); }
+    50%      { box-shadow: 0 6px 36px rgba(220,38,38,0.9); }
+  }
+
+  .btn-toggle {
+    width: 100%;
+    padding: 22px;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    border-radius: 16px;
+    border: 2px solid transparent;
+    transition: all 0.25s ease;
+    text-transform: uppercase;
+  }
+  .btn-toggle.on {
+    background: linear-gradient(135deg, #10b981, #059669);
+    border-color: rgba(74,222,128,0.6);
+    box-shadow: 0 8px 26px rgba(16,185,129,0.55);
+    color: #fff;
+  }
+  .btn-toggle.off {
+    background: linear-gradient(135deg, #475569, #334155);
+    border-color: rgba(148,163,184,0.4);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+    color: #cbd5e1;
+  }
+  .btn-toggle:active { transform: scale(0.97); }
+
+  #logout {
+    color: #64748b; text-align: center;
+    margin-top: 28px; margin-bottom: 12px;
+    font-size: 13px; text-decoration: underline; cursor: pointer;
+  }
+  .notif-btn {
+    background: rgba(30,41,59,0.7);
+    color: #7dd3fc;
+    border: 1px solid rgba(125,211,252,0.4);
+    padding: 8px 14px; border-radius: 10px;
+    font-size: 12px; cursor: pointer;
+    font-weight: 600; letter-spacing: 0.5px;
+  }
+  .notif-btn.on {
+    background: rgba(16,185,129,0.2);
+    color: #6ee7b7;
+    border-color: rgba(16,185,129,0.5);
+  }
+</style>
+</head>
+<body>
+
+<div id="loginBox">
+  <h1>🏠 ESP32 Smart Home</h1>
+  <label>Username</label>
+  <input type="text" id="userIn" value="esp32user" autocomplete="username">
+  <label>Password</label>
+  <input type="password" id="passIn" autocomplete="current-password">
+  <button onclick="doLogin()">CONNECT</button>
+</div>
+
+<div id="dashboard" class="container">
+
+  <div class="topbar">
+    <h1><span class="live-dot" id="liveDot"></span>Smart Home</h1>
+    <button class="notif-btn" id="notifBtn" onclick="toggleNotifications()">🔔 Enable Alerts</button>
+  </div>
+
+  <div id="banner">Connecting…</div>
+
+  <h2>⚡ Power Monitor</h2>
+  <div class="grid">
+    <div class="card"><span class="icon">🔌</span><div class="label">AC Mains</div><div class="value" id="v_voltage">—</div></div>
+    <div class="card"><span class="icon">⚡</span><div class="label">Current</div><div class="value" id="v_current">—</div></div>
+    <div class="card"><span class="icon">📊</span><div class="label">Energy</div><div class="value" id="v_energy">—</div></div>
+    <div class="card"><span class="icon">🌡️</span><div class="label">House Temp</div><div class="value" id="v_temp">—</div></div>
+  </div>
+
+  <h2>🛡️ Safety Status</h2>
+  <div class="grid">
+    <div class="card" id="c_flame"><span class="icon">🔥</span><div class="label">Flame</div><div class="value" id="v_flame">—</div></div>
+    <div class="card" id="c_gas"><span class="icon">💨</span><div class="label">Gas</div><div class="value" id="v_gas">—</div></div>
+    <div class="card" id="c_door"><span class="icon">🚪</span><div class="label">Door</div><div class="value" id="v_door">—</div></div>
+    <div class="card" id="c_mqtt"><span class="icon">📡</span><div class="label">MQTT</div><div class="value" id="v_mqtt">—</div></div>
+  </div>
+
+  <h2>🔌 Room 1</h2>
+  <button id="btn_room1" class="btn btn-toggle off" onclick="toggleRoom(1)">
+    <span class="relay-state">○ OFF</span>
+  </button>
+
+  <h2>🔌 Room 2</h2>
+  <button id="btn_room2" class="btn btn-toggle off" onclick="toggleRoom(2)">
+    <span class="relay-state">○ OFF</span>
+  </button>
+
+  <h2>🚨 Emergency</h2>
+  <button class="btn btn-danger" onclick="sendCmd('BUZZER_OFF')">🔕 SILENCE BUZZER</button>
+
+  <div id="logout" onclick="doLogout()">Log out</div>
+</div>
+
+<script>
+const BROKER_URL = 'wss://d3f17d7a.ala.eu-central-1.emqxsl.com:8084/mqtt';
+const TOPIC_DATA  = 'home/sensors/data';
+const TOPIC_CMD   = 'home/sensors/command';
+const TOPIC_EVENT = 'home/sensors/event';
+
+let client = null;
+let bannerTimer = null;
+let notificationsEnabled = false;
+
+const relayState = { room1: 1, room2: 1 };
+
+// ============================================================
+// LOGIN / LOGOUT
+// ============================================================
+function doLogin() {
+  const u = document.getElementById('userIn').value.trim();
+  const p = document.getElementById('passIn').value;
+  if (!u || !p) { alert('Enter username and password'); return; }
+  localStorage.setItem('mqtt_user', u);
+  localStorage.setItem('mqtt_pass', p);
+  startDashboard(u, p);
+}
+
+function doLogout() {
+  localStorage.removeItem('mqtt_user');
+  localStorage.removeItem('mqtt_pass');
+  if (client) { try { client.end(true); } catch(e){} client = null; }
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('loginBox').style.display = 'block';
+}
+
+window.addEventListener('load', () => {
+  const u = localStorage.getItem('mqtt_user');
+  const p = localStorage.getItem('mqtt_pass');
+  if (u && p) {
+    document.getElementById('userIn').value = u;
+    document.getElementById('passIn').value = p;
+    startDashboard(u, p);
+  }
+  updateNotifBtn();
+});
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+function toggleNotifications() {
+  if (!('Notification' in window)) { alert('Browser notifications not supported.'); return; }
+  if (Notification.permission === 'granted') {
+    notificationsEnabled = !notificationsEnabled;
+    updateNotifBtn();
+    if (notificationsEnabled) sendNotification('🔔 Alerts Enabled', 'You will now receive home alerts.');
+  } else {
+    Notification.requestPermission().then(perm => {
+      if (perm === 'granted') {
+        notificationsEnabled = true;
+        updateNotifBtn();
+        sendNotification('🔔 Alerts Enabled', 'You will now receive home alerts.');
+      } else alert('Notification permission denied.');
+    });
+  }
+}
+
+function updateNotifBtn() {
+  const btn = document.getElementById('notifBtn');
+  if (Notification.permission === 'granted' && notificationsEnabled) {
+    btn.textContent = '🔔 Alerts ON'; btn.classList.add('on');
+  } else if (Notification.permission === 'granted') {
+    btn.textContent = '🔕 Alerts OFF'; btn.classList.remove('on');
+  } else {
+    btn.textContent = '🔔 Enable Alerts'; btn.classList.remove('on');
+  }
+}
+
+function sendNotification(title, body) {
+  if (!notificationsEnabled || Notification.permission !== 'granted') return;
+  try {
+    new Notification(title, {
+      body: body, tag: 'esp32-alert',
+      requireInteraction: false, vibrate: [200, 100, 200]
+    });
+  } catch(e) {}
+}
+
+function beepAlert() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.type = 'square'; osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    osc.start(); osc.stop(ctx.currentTime + 0.4);
+  } catch(e) {}
+}
+
+// ============================================================
+// RELAY TOGGLE
+// ============================================================
+function updateRelayButton(room) {
+  const btn = document.getElementById('btn_room' + room);
+  if (!btn) return;
+  const state = relayState['room' + room];
+  const label = btn.querySelector('.relay-state');
+  if (state) {
+    btn.classList.remove('off'); btn.classList.add('on');
+    label.textContent = '● ON';
+  } else {
+    btn.classList.remove('on'); btn.classList.add('off');
+    label.textContent = '○ OFF';
+  }
+}
+
+function toggleRoom(room) {
+  if (!client || !client.connected) { alert('Not connected to MQTT'); return; }
+  const key = 'room' + room;
+  const newState = relayState[key] ? 0 : 1;
+  const cmd = 'ROOM' + room + '_' + (newState ? 'ON' : 'OFF');
+  client.publish(TOPIC_CMD, cmd);
+  relayState[key] = newState;
+  updateRelayButton(room);
+  console.log('Sent:', cmd);
+}
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+function startDashboard(user, pass) {
+  document.getElementById('loginBox').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+  setBanner('Connecting…', 'disconnected');
+
+  const clientId = 'web-' + Math.random().toString(16).substr(2, 8);
+
+  client = mqtt.connect(BROKER_URL, {
+    clientId, username: user, password: pass,
+    clean: true, reconnectPeriod: 3000,
+    connectTimeout: 10000, keepalive: 60,
+  });
+
+  client.on('connect', () => {
+    setBanner('✅ Connected — Live', 'connected');
+    document.getElementById('liveDot').classList.remove('off');
+    document.getElementById('v_mqtt').textContent = 'LIVE';
+    document.getElementById('c_mqtt').className = 'card ok';
+    client.subscribe(TOPIC_DATA);
+    client.subscribe(TOPIC_EVENT);
+    updateRelayButton(1);
+    updateRelayButton(2);
+  });
+
+  client.on('reconnect', () => {
+    setBanner('🔄 Reconnecting…', 'disconnected');
+    document.getElementById('liveDot').classList.add('off');
+  });
+  client.on('close', () => {
+    setBanner('❌ Disconnected', 'disconnected');
+    document.getElementById('liveDot').classList.add('off');
+    document.getElementById('v_mqtt').textContent = 'DOWN';
+  });
+  client.on('error', (e) => {
+    console.error(e);
+    setBanner('❌ Error: ' + e.message, 'disconnected');
+  });
+
+  client.on('message', (topic, payload) => {
+    const msg = payload.toString();
+    if (topic === TOPIC_DATA) {
+      try {
+        const d = JSON.parse(msg);
+
+        // Only update fields present in the message
+        if (d.voltage !== undefined)
+          document.getElementById('v_voltage').textContent = d.voltage.toFixed(0) + ' V';
+        if (d.current !== undefined)
+          document.getElementById('v_current').textContent = d.current.toFixed(3) + ' A';
+        if (d.energy_wh !== undefined)
+          document.getElementById('v_energy').textContent = d.energy_wh.toFixed(1) + ' Wh';
+        if (d.temp_c !== undefined)
+          document.getElementById('v_temp').textContent = d.temp_c.toFixed(1) + ' °C';
+
+        if (d.flame !== undefined) {
+          const flameOK = d.flame === 1;
+          document.getElementById('v_flame').textContent = flameOK ? 'SAFE' : 'FLAME!';
+          document.getElementById('c_flame').className = 'card ' + (flameOK ? 'ok' : 'warn');
+        }
+        if (d.gas !== undefined) {
+          const gasOK = d.gas === 1;
+          document.getElementById('v_gas').textContent = gasOK ? 'SAFE' : 'GAS!';
+          document.getElementById('c_gas').className = 'card ' + (gasOK ? 'ok' : 'warn');
+        }
+        if (d.door !== undefined) {
+          const doorOK = d.door === 1;
+          document.getElementById('v_door').textContent = doorOK ? 'CLOSED' : 'OPEN';
+          document.getElementById('c_door').className = 'card ' + (doorOK ? 'ok' : 'warn');
+        }
+
+        if (d.room1 !== undefined) {
+          relayState.room1 = d.room1 ? 1 : 0;
+          updateRelayButton(1);
+        }
+        if (d.room2 !== undefined) {
+          relayState.room2 = d.room2 ? 1 : 0;
+          updateRelayButton(2);
+        }
+      } catch(e) { console.error('Parse error', e); }
+    }
+    else if (topic === TOPIC_EVENT) {
+      showEvent(msg);
+    }
+  });
+}
+
+function setBanner(text, cls) {
+  const b = document.getElementById('banner');
+  b.textContent = text;
+  b.className = cls;
+}
+
+function showEvent(eventName) {
+  clearTimeout(bannerTimer);
+  let text = '', cls = '', notifTitle = '', notifBody = '';
+  switch (eventName) {
+    case 'INTRUDER_ALERT':
+      text = '🚨 INTRUDER ALERT 🚨'; cls = 'alert-intruder';
+      notifTitle = '🚨 INTRUDER ALERT'; notifBody = 'Unauthorized door opening!';
+      break;
+    case 'GAS_ALERT':
+      text = '💨 GAS LEAKAGE!'; cls = 'alert-gas';
+      notifTitle = '💨 GAS LEAKAGE'; notifBody = 'Gas detected!';
+      break;
+    case 'FLAME_ALERT':
+      text = '🔥 FIRE DETECTED!'; cls = 'alert-flame';
+      notifTitle = '🔥 FIRE DETECTED'; notifBody = 'Flame detected!';
+      break;
+    case 'GAS_FLAME_ALERT':
+      text = '🔥💨 FIRE + GAS!'; cls = 'alert-flame';
+      notifTitle = '🔥💨 FIRE + GAS'; notifBody = 'Both flame and gas detected!';
+      break;
+    case 'ACCESS_GRANTED':
+      text = '✅ ACCESS GRANTED'; cls = 'alert-success';
+      notifTitle = '✅ Access Granted'; notifBody = 'Correct PIN entered.';
+      break;
+    case 'ACCESS_DENIED':
+      text = '⛔ ACCESS DENIED'; cls = 'alert-gas';
+      notifTitle = '⛔ Access Denied'; notifBody = 'Wrong PIN entered.';
+      break;
+    default: text = eventName; cls = 'connected';
+  }
+  setBanner(text, cls);
+  if (notifTitle) { sendNotification(notifTitle, notifBody); beepAlert(); }
+  bannerTimer = setTimeout(() => setBanner('✅ Connected', 'connected'), 8000);
+}
+
+function sendCmd(cmd) {
+  if (!client || !client.connected) { alert('Not connected to MQTT'); return; }
+  client.publish(TOPIC_CMD, cmd);
+  console.log('Sent:', cmd);
+}
+</script>
+</body>
+</html>
